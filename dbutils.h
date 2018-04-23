@@ -501,6 +501,7 @@ void		get_node_replication_stats(PGconn *conn, int server_version_num, t_node_in
 bool		is_downstream_node_attached(PGconn *conn, char *node_name);
 
 /* BDR functions */
+int			get_bdr_version_num(void);
 void		get_all_bdr_node_records(PGconn *conn, BdrNodeInfoList *node_list);
 RecordStatus get_bdr_node_record_by_name(PGconn *conn, const char *node_name, t_bdr_node_info *node_info);
 bool		is_bdr_db(PGconn *conn, PQExpBufferData *output);

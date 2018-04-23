@@ -2219,6 +2219,7 @@ _create_update_node_record(PGconn *conn, char *action, t_node_info *node_info)
 	const char *param_values[param_count];
 
 	PGresult   *res;
+	bool		success = true;
 
 	maxlen_snprintf(node_id, "%i", node_info->node_id);
 	maxlen_snprintf(priority, "%i", node_info->priority);
@@ -2305,13 +2306,13 @@ _create_update_node_record(PGconn *conn, char *action, t_node_info *node_info)
 				  node_info->node_name,
 				  node_info->node_id);
 		log_detail("%s", PQerrorMessage(conn));
-		PQclear(res);
-		return false;
+
+		success = false;
 	}
 
 	PQclear(res);
 
-	return true;
+	return success;
 }
 
 
@@ -2320,6 +2321,7 @@ update_node_record_set_active(PGconn *conn, int this_node_id, bool active)
 {
 	PQExpBufferData query;
 	PGresult   *res = NULL;
+	bool		success = true;
 
 	initPQExpBuffer(&query);
 
@@ -2338,13 +2340,13 @@ update_node_record_set_active(PGconn *conn, int this_node_id, bool active)
 	{
 		log_error(_("unable to update node record:\n  %s"),
 				  PQerrorMessage(conn));
-		PQclear(res);
-		return false;
+
+		success = false;
 	}
 
 	PQclear(res);
 
-	return true;
+	return success;
 }
 
 
@@ -2353,6 +2355,7 @@ update_node_record_set_active_standby(PGconn *conn, int this_node_id)
 {
 	PQExpBufferData query;
 	PGresult   *res = NULL;
+	bool		success = true;
 
 	initPQExpBuffer(&query);
 
@@ -2372,13 +2375,13 @@ update_node_record_set_active_standby(PGconn *conn, int this_node_id)
 	{
 		log_error(_("unable to update node record:\n  %s"),
 				  PQerrorMessage(conn));
-		PQclear(res);
-		return false;
+
+		success = false;
 	}
 
 	PQclear(res);
 
-	return true;
+	return success;
 }
 
 
@@ -2444,11 +2447,13 @@ update_node_record_set_primary(PGconn *conn, int this_node_id)
 	return commit_transaction(conn);
 }
 
+
 bool
 update_node_record_set_upstream(PGconn *conn, int this_node_id, int new_upstream_node_id)
 {
 	PQExpBufferData query;
 	PGresult   *res = NULL;
+	bool		success = true;
 
 	log_debug(_("update_node_record_set_upstream(): Updating node %i's upstream node to %i"),
 			  this_node_id, new_upstream_node_id);
@@ -2470,14 +2475,13 @@ update_node_record_set_upstream(PGconn *conn, int this_node_id, int new_upstream
 	{
 		log_error(_("unable to set new upstream node id:\n  %s"),
 				  PQerrorMessage(conn));
-		PQclear(res);
 
-		return false;
+		success = false;
 	}
 
 	PQclear(res);
 
-	return true;
+	return success;
 }
 
 
@@ -2490,6 +2494,7 @@ update_node_record_status(PGconn *conn, int this_node_id, char *type, int upstre
 {
 	PQExpBufferData query;
 	PGresult   *res = NULL;
+	bool		success = true;
 
 	initPQExpBuffer(&query);
 
@@ -2513,14 +2518,13 @@ update_node_record_status(PGconn *conn, int this_node_id, char *type, int upstre
 	{
 		log_error(_("unable to update node record:\n  %s"),
 				  PQerrorMessage(conn));
-		PQclear(res);
 
-		return false;
+		success = false;
 	}
 
 	PQclear(res);
 
-	return true;
+	return success;
 }
 
 
@@ -2533,6 +2537,7 @@ update_node_record_conn_priority(PGconn *conn, t_configuration_options *options)
 {
 	PQExpBufferData query;
 	PGresult   *res = NULL;
+	bool		success = true;
 
 	initPQExpBuffer(&query);
 
@@ -2550,13 +2555,12 @@ update_node_record_conn_priority(PGconn *conn, t_configuration_options *options)
 
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
-
-		PQclear(res);
-		return false;
+		success = false;
 	}
 
 	PQclear(res);
-	return true;
+
+	return success;
 }
 
 
@@ -2620,6 +2624,7 @@ delete_node_record(PGconn *conn, int node)
 {
 	PQExpBufferData query;
 	PGresult   *res = NULL;
+	bool		success = true;
 
 	initPQExpBuffer(&query);
 
@@ -2637,19 +2642,20 @@ delete_node_record(PGconn *conn, int node)
 	{
 		log_error(_("unable to delete node record:\n  %s"),
 				  PQerrorMessage(conn));
-		PQclear(res);
-		return false;
+
+		success = false;
 	}
 
 	PQclear(res);
 
-	return true;
+	return success;
 }
 
 bool
 truncate_node_records(PGconn *conn)
 {
 	PGresult   *res = NULL;
+	bool		success = true;
 
 	res = PQexec(conn, "TRUNCATE TABLE repmgr.nodes");
 
@@ -2657,12 +2663,13 @@ truncate_node_records(PGconn *conn)
 	{
 		log_error(_("unable to truncate node record table:\n  %s"),
 				  PQerrorMessage(conn));
-		PQclear(res);
-		return false;
+
+		success = false;
 	}
 
 	PQclear(res);
-	return true;
+
+	return success;
 }
 
 
@@ -4269,6 +4276,7 @@ get_last_wal_receive_location(PGconn *conn)
 /* BDR functions */
 /* ============= */
 
+
 static bool
 _is_bdr_db(PGconn *conn, PQExpBufferData *output, bool quiet)
 {
@@ -4353,6 +4361,12 @@ is_bdr_db_quiet(PGconn *conn)
 	return _is_bdr_db(conn, NULL, true);
 }
 
+
+int
+get_bdr_version_num(void)
+{
+	return bdr_version_num;
+}
 
 bool
 is_active_bdr_node(PGconn *conn, const char *node_name)
@@ -4458,8 +4472,16 @@ is_table_in_bdr_replication_set(PGconn *conn, const char *tablename, const char 
 	}
 	else
 	{
-		puts("is_table_in_bdr_replication_set(): not yet implemented for 3");
-		exit(1);
+		appendPQExpBuffer(&query,
+						  "     SELECT pg_catalog.count(*) "
+						  "       FROM pglogical.replication_set s "
+						  " INNER JOIN pglogical.replication_set_table st "
+						  "         ON s.set_id = st.set_id "
+						  "      WHERE s.set_name = '%s' "
+						  "        AND st.set_reloid = 'repmgr.%s'::REGCLASS ",
+						  set,
+						  tablename);
+
 	}
 
 	res = PQexec(conn, query.data);
@@ -4486,6 +4508,7 @@ add_table_to_bdr_replication_set(PGconn *conn, const char *tablename, const char
 {
 	PQExpBufferData query;
 	PGresult   *res = NULL;
+	bool		success = true;
 
 	initPQExpBuffer(&query);
 
@@ -4498,8 +4521,20 @@ add_table_to_bdr_replication_set(PGconn *conn, const char *tablename, const char
 	}
 	else
 	{
-		puts("add_table_to_bdr_replication_set(): not yet implemented for 3");
-		exit(1);
+/*		appendPQExpBuffer(&query,
+						  " SELECT bdr.replication_set_add_table( "
+						  "   relation := 'repmgr.%s', "
+						  "   set_name := '%s' "
+						  " ) ",
+						  tablename,
+						  set);*/
+		appendPQExpBuffer(&query,
+						  "  SELECT pglogical.replication_set_add_table( "
+						  "   relation := 'repmgr.%s', "
+						  "   set_name := '%s' "
+						  " ) ",
+						  tablename,
+						  set);
 	}
 
 	res = PQexec(conn, query.data);
@@ -4507,19 +4542,17 @@ add_table_to_bdr_replication_set(PGconn *conn, const char *tablename, const char
 
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
-		log_error(_("unable to add table \"repmgr.%s\" to replication set \"%s\":\n  %s"),
+		log_error(_("unable to add table \"repmgr.%s\" to replication set \"%s\""),
 				  tablename,
-				  set,
-				  PQerrorMessage(conn));
+				  set);
+		log_detail("%s", PQerrorMessage(conn));
 
-		if (res != NULL)
-			PQclear(res);
-
-		return false;
+		success = false;
 	}
+
 	PQclear(res);
 
-	return true;
+	return success;
 }
 
 
@@ -4673,7 +4706,7 @@ add_extension_tables_to_bdr_replication_set(PGconn *conn)
 
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
-		/* */
+		/* XXX log error */
 	}
 	else
 	{
@@ -4894,8 +4927,10 @@ bdr_node_has_repmgr_set(PGconn *conn, const char *node_name)
 	}
 	else
 	{
-		puts("bdr_node_has_repmgr_set(): not implemented yet for BDR3");
-		exit(1);
+		appendPQExpBuffer(&query,
+						  " SELECT pg_catalog.count(*) "
+						  "   FROM pglogical.replication_set "
+						  "  WHERE set_name = 'repmgr' ");
 	}
 
 	res = PQexec(conn, query.data);
@@ -4923,10 +4958,17 @@ bdr_node_set_repmgr_set(PGconn *conn, const char *node_name)
 	PGresult   *res = NULL;
 	bool		success = true;
 
+//	if (bdr_version_num >= 3)
+//		return true;
+
 	initPQExpBuffer(&query);
 
 	if (bdr_version_num < 3)
 	{
+		/*
+		 * Here we extract a list of existing replication sets, add 'repmgr', and
+		 * set the replication sets to the new list.
+		 */
 		appendPQExpBuffer(&query,
 						  " SELECT bdr.connection_set_replication_sets( "
 						  "   ARRAY( "
@@ -4942,15 +4984,29 @@ bdr_node_set_repmgr_set(PGconn *conn, const char *node_name)
 	}
 	else
 	{
-		puts("bdr_node_set_repmgr_set(): not implemented yet for BDR3");
-		exit(1);
+		/* XXX assuming here BDR always sets subscription_name to "bdrgroup_${node_name} */
+/*		appendPQExpBuffer(&query,
+						  " SELECT pglogical.alter_subscription_add_replication_set( "
+						  "   subscription_name := 'bdrgroup_%s', "
+						  "   replication_set := 'repmgr' "
+						  " )",
+						  node_name);*/
+
+		appendPQExpBuffer(&query,
+						  "  SELECT pglogical.create_replication_set(set_name := 'repmgr')");
 	}
+
+	log_debug("bdr_node_set_repmgr_set():\n%s", query.data);
 
 	res = PQexec(conn, query.data);
 	termPQExpBuffer(&query);
 
+
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
+		log_debug("result status: %s", PQresStatus(PQresultStatus(res)));
+		log_error(_("unable to create replication set \"repmgr\""));
+		log_detail("%s", PQerrorMessage(conn));
 		success = false;
 	}
 
