@@ -1796,6 +1796,8 @@ get_node_type_string(t_server_type type)
 			return "witness";
 		case BDR:
 			return "bdr";
+		case BDR_STANDBY:
+			return "bdr_standby";
 			/* this should never happen */
 		case UNKNOWN:
 		default:
@@ -4815,6 +4817,7 @@ get_all_bdr_node_records(PGconn *conn, BdrNodeInfoList *node_list)
 	return;
 }
 
+
 RecordStatus
 get_bdr_node_record_by_name(PGconn *conn, const char *node_name, t_bdr_node_info *node_info)
 {
@@ -4850,6 +4853,59 @@ get_bdr_node_record_by_name(PGconn *conn, const char *node_name, t_bdr_node_info
 		log_error(_("unable to retrieve BDR node record for \"%s\":\n  %s"),
 				  node_name,
 				  PQerrorMessage(conn));
+
+		PQclear(res);
+		return RECORD_ERROR;
+	}
+
+	if (PQntuples(res) == 0)
+	{
+		PQclear(res);
+		return RECORD_NOT_FOUND;
+	}
+
+	_populate_bdr_node_record(res, node_info, 0);
+
+	PQclear(res);
+
+	return RECORD_FOUND;
+}
+
+
+/*
+ * BDR 3 only
+ */
+RecordStatus
+get_bdr_upstream_node_record(PGconn *conn, t_bdr_node_info *node_info)
+{
+	PQExpBufferData query;
+	PGresult   *res = NULL;
+
+	initPQExpBuffer(&query);
+
+	/*
+	 * ensure this record returns columns which can be passed to
+	 * _populate_bdr_node_record()
+	 */
+	appendPQExpBuffer(&query,
+					  "    SELECT ns.node_id, 0, 0, ss.origin_name, ns.interface_connstr, ns.peer_state_name "
+					  "      FROM bdr.local_node_summary lns "
+					  "      JOIN bdr.subscription_summary ss "
+					  "        ON ss.target_id = lns.node_id "
+					  "      JOIN bdr.node_summary ns "
+					  "        ON ns.node_id = ss.origin_id "
+					  "     WHERE ss.subscription_status = 'replicating' "
+					  "       AND lns.peer_state_name = 'BDR_PEER_STATE_STANDBY' ");
+
+	log_verbose(LOG_DEBUG, "get_bdr_node_record_by_name():\n%s", query.data);
+
+	res = PQexec(conn, query.data);
+	termPQExpBuffer(&query);
+
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+	{
+		log_error(_("unable to retrieve an upstream BDR node record"));
+		log_detail("%s", PQerrorMessage(conn));
 
 		PQclear(res);
 		return RECORD_ERROR;

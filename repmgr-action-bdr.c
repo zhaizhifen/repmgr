@@ -182,11 +182,16 @@ do_bdr_register(void)
 	}
 
 	/*
-	 * before adding the extension tables to the replication set, if any other
-	 * BDR nodes exist, populate repmgr.nodes with a copy of existing entries
+	 * Before adding the extension tables to the replication set, if any other
+	 * BDR nodes exist, populate the local repmgr.nodes with a copy of existing
+	 * entries from the other node.
 	 *
-	 * currently we won't copy the contents of any other tables
+	 * Currently we won't copy the contents of any other tables.
 	 *
+	 * Note this scans the list of BDR nodes until it finds one which has
+	 * repmgr enabled, and copies the repmgr node records from that. For BDR 3
+	 * we should possibly have it go through all nodes to ensure it has copies
+	 * for all records from all nodes?
 	 */
 	{
 		NodeInfoList local_node_records = T_NODE_INFO_LIST_INITIALIZER;
@@ -254,15 +259,31 @@ do_bdr_register(void)
 		}
 	}
 
-	/* Add the repmgr extension tables to a replication set */
+	/*
+	 * Do some configuration specific to the BDR version:
+	 *  - add the repmgr extension table(s) to a replication set
+	 *  - determine node type, and if applicable upstream node id
+	 */
+
+	node_info.type = BDR;
+	node_info.node_id = config_file_options.node_id;
+	node_info.upstream_node_id = NO_UPSTREAM_NODE;
+	node_info.active = true;
+	node_info.priority = config_file_options.priority;
+
+	strncpy(node_info.node_name, config_file_options.node_name, MAXLEN);
+	strncpy(node_info.location, config_file_options.location, MAXLEN);
+	strncpy(node_info.conninfo, config_file_options.conninfo, MAXLEN);
+
 
 	if (get_bdr_version_num() < 3)
 	{
+		/* for BDR2 we create a custom replication set ("repmgr") */
 		add_extension_tables_to_bdr_replication_set(conn);
 	}
 	else
 	{
-		/* this is the only table we need to replicate */
+		/* for BDR3 we use the default BDR replication set */
 		char *replication_set = get_default_bdr_replication_set(conn);
 
 		/*
@@ -277,12 +298,71 @@ do_bdr_register(void)
 			exit(ERR_BAD_CONFIG);
 		}
 
+		/* this is the only table we need to replicate */
+
 		if (is_table_in_bdr_replication_set(conn, "nodes", replication_set) == false)
 		{
 			add_table_to_bdr_replication_set(conn, "nodes", replication_set);
 		}
 
 		pfree(replication_set);
+
+		/*
+		 * Determine whether this is a write master or a logical standby, and if the latter,
+		 * determine its upstream node id
+		 */
+		{
+			t_bdr_node_info local_bdr_node = T_BDR_NODE_INFO_INITIALIZER;
+
+			RecordStatus recstatus = get_bdr_node_record_by_name(conn, config_file_options.node_name, &local_bdr_node);
+
+			if (recstatus != RECORD_FOUND)
+			{
+				// XXX fix error message
+				log_error(_("unable to retrieve local BDR node record"));
+				exit(ERR_BAD_CONFIG);
+			}
+
+			log_debug("local node %s: peer_state_name is %s",
+					  local_bdr_node.node_name,
+					  local_bdr_node.peer_state_name);
+
+			if (strncmp(local_bdr_node.peer_state_name, "BDR_PEER_STATE_STANDBY", MAXLEN) == 0)
+			{
+				t_node_info upstream_repmgr_record = T_NODE_INFO_INITIALIZER;
+				t_bdr_node_info upstream_bdr_node = T_BDR_NODE_INFO_INITIALIZER;
+				recstatus = get_bdr_upstream_node_record(conn, &upstream_bdr_node);
+
+				if  (recstatus != RECORD_FOUND)
+				{
+					// XXX fix error message
+					log_error(_("unable to retrieve upstream BDR node record"));
+					exit(ERR_BAD_CONFIG);
+				}
+
+				log_debug("upstream BDR node is %s", upstream_bdr_node.node_name);
+
+				recstatus = get_node_record_by_name(conn, upstream_bdr_node.node_name, &upstream_repmgr_record);
+				// no upstream node id found - exit with error
+				if  (recstatus != RECORD_FOUND)
+				{
+					// XXX fix error message
+					log_error(_("unable to retrieve upstream BDR node record"));
+					exit(ERR_BAD_CONFIG);
+				}
+				log_debug("upstream repmgr node is %s", upstream_repmgr_record.node_name);
+
+				// debug log
+				/* update node record configuration */
+				node_info.type = BDR_STANDBY;
+				node_info.upstream_node_id = upstream_repmgr_record.node_id;
+
+				/* finally, switch connection to the upstream write master */
+				PQfinish(conn);
+				conn = establish_db_connection_quiet(upstream_bdr_node.node_local_dsn);
+			}
+
+		}
 	}
 
 	initPQExpBuffer(&event_details);
@@ -297,16 +377,6 @@ do_bdr_register(void)
 	record_status = get_node_record(conn, config_file_options.node_id, &node_info);
 
 	/* Update internal node record */
-
-	node_info.type = BDR;
-	node_info.node_id = config_file_options.node_id;
-	node_info.upstream_node_id = NO_UPSTREAM_NODE;
-	node_info.active = true;
-	node_info.priority = config_file_options.priority;
-
-	strncpy(node_info.node_name, config_file_options.node_name, MAXLEN);
-	strncpy(node_info.location, config_file_options.location, MAXLEN);
-	strncpy(node_info.conninfo, config_file_options.conninfo, MAXLEN);
 
 	if (record_status == RECORD_FOUND)
 	{
@@ -382,8 +452,7 @@ do_bdr_register(void)
 
 	commit_transaction(conn);
 	/* Log the event */
-	create_event_notification(
-							  conn,
+	create_event_notification(conn,
 							  &config_file_options,
 							  config_file_options.node_id,
 							  "bdr_register",

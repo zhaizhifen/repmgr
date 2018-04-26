@@ -506,6 +506,7 @@ bool		is_downstream_node_attached(PGconn *conn, char *node_name);
 int			get_bdr_version_num(void);
 void		get_all_bdr_node_records(PGconn *conn, BdrNodeInfoList *node_list);
 RecordStatus get_bdr_node_record_by_name(PGconn *conn, const char *node_name, t_bdr_node_info *node_info);
+RecordStatus get_bdr_upstream_node_record(PGconn *conn, t_bdr_node_info *node_info);
 bool		is_bdr_db(PGconn *conn, PQExpBufferData *output);
 bool		is_bdr_db_quiet(PGconn *conn);
 bool		is_active_bdr_node(PGconn *conn, const char *node_name);
