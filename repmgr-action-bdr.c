@@ -263,11 +263,26 @@ do_bdr_register(void)
 	else
 	{
 		/* this is the only table we need to replicate */
+		char *replication_set = get_default_bdr_replication_set(conn);
 
-		if (is_table_in_bdr_replication_set(conn, "nodes", "repmgr") == false)
+		/*
+		 * this probably won't happen, but we need to be sure we're using
+		 * the replication set metadata correctly...
+		 */
+		if (conn == NULL)
 		{
-			add_table_to_bdr_replication_set(conn, "nodes", "repmgr");
+			log_error(_("unable to retrieve default BDR replication set"));
+			log_hint(_("see preceding messages"));
+			log_debug("check query in get_default_bdr_replication_set()");
+			exit(ERR_BAD_CONFIG);
 		}
+
+		if (is_table_in_bdr_replication_set(conn, "nodes", replication_set) == false)
+		{
+			add_table_to_bdr_replication_set(conn, "nodes", replication_set);
+		}
+
+		pfree(replication_set);
 	}
 
 	initPQExpBuffer(&event_details);

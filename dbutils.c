@@ -4307,6 +4307,8 @@ _is_bdr_db(PGconn *conn, PQExpBufferData *output, bool quiet)
 
 	PQclear(res);
 
+	log_verbose(LOG_DEBUG, "BDR ext version number is %i", bdr_version_num);
+
 	if (is_bdr_db == false)
 	{
 		const char *warning = _("BDR extension is not available for this database");
@@ -4452,6 +4454,64 @@ is_bdr_repmgr(PGconn *conn)
 }
 
 
+
+/*
+ * Get name of default BDR replication set.
+ *
+ * Caller must free provided value.
+ */
+char *
+get_default_bdr_replication_set(PGconn *conn)
+{
+	PQExpBufferData query;
+	PGresult   *res = NULL;
+	char	   *default_replication_set = NULL;
+	int			namelen;
+
+	if (bdr_version_num < 3)
+	{
+		/* For BDR2, we use a custom replication set */
+		namelen = strlen(BDR2_REPLICATION_SET_NAME);
+		default_replication_set = pg_malloc0(namelen + 1);
+		strncpy(default_replication_set, BDR2_REPLICATION_SET_NAME, namelen);
+
+		return default_replication_set;
+	}
+
+
+	initPQExpBuffer(&query);
+
+	appendPQExpBuffer(&query,
+					  "     SELECT rs.set_name "
+					  "       FROM pglogical.replication_set rs "
+					  " INNER JOIN bdr.node_group ng "
+					  "         ON ng.node_group_default_repset = rs.set_id ");
+
+	res = PQexec(conn, query.data);
+	termPQExpBuffer(&query);
+
+	if (PQresultStatus(res) != PGRES_TUPLES_OK || PQntuples(res) == 0)
+	{
+		log_warning(_("unable to retrieve default BDR replication set name"));
+
+		if (PQresultStatus(res) != PGRES_TUPLES_OK)
+			log_detail("%s", PQerrorMessage(conn));
+
+		PQclear(res);
+		return NULL;
+	}
+
+	namelen = strlen(PQgetvalue(res, 0, 0));
+	default_replication_set = pg_malloc0(namelen + 1);
+
+	strncpy(default_replication_set, PQgetvalue(res, 0, 0), namelen);
+
+	PQclear(res);
+
+	return default_replication_set;
+}
+
+
 bool
 is_table_in_bdr_replication_set(PGconn *conn, const char *tablename, const char *set)
 {
@@ -4521,15 +4581,8 @@ add_table_to_bdr_replication_set(PGconn *conn, const char *tablename, const char
 	}
 	else
 	{
-/*		appendPQExpBuffer(&query,
-						  " SELECT bdr.replication_set_add_table( "
-						  "   relation := 'repmgr.%s', "
-						  "   set_name := '%s' "
-						  " ) ",
-						  tablename,
-						  set);*/
 		appendPQExpBuffer(&query,
-						  "  SELECT pglogical.replication_set_add_table( "
+						  " SELECT bdr.replication_set_add_table( "
 						  "   relation := 'repmgr.%s', "
 						  "   set_name := '%s' "
 						  " ) ",
@@ -4685,6 +4738,9 @@ get_bdr_other_node_name(PGconn *conn, int node_id, char *node_name)
 }
 
 
+/*
+ * For BDR 2.x only
+ */
 void
 add_extension_tables_to_bdr_replication_set(PGconn *conn)
 {
@@ -4915,23 +4971,17 @@ bdr_node_has_repmgr_set(PGconn *conn, const char *node_name)
 	PGresult   *res = NULL;
 	bool		has_repmgr_set = false;
 
+	if (bdr_version_num >= 3)
+		return true;
+
 	initPQExpBuffer(&query);
 
-	if (bdr_version_num < 3)
-	{
-		appendPQExpBuffer(&query,
-						  " SELECT pg_catalog.count(*) "
-						  "   FROM pg_catalog.unnest(bdr.connection_get_replication_sets('%s') AS repset "
-						  "  WHERE repset = 'repmgr'",
-						  node_name);
-	}
-	else
-	{
-		appendPQExpBuffer(&query,
-						  " SELECT pg_catalog.count(*) "
-						  "   FROM pglogical.replication_set "
-						  "  WHERE set_name = 'repmgr' ");
-	}
+	appendPQExpBuffer(&query,
+					  " SELECT pg_catalog.count(*) "
+					  "   FROM pg_catalog.unnest(bdr.connection_get_replication_sets('%s') AS repset "
+					  "  WHERE repset = '%s'",
+					  node_name,
+					  BDR2_REPLICATION_SET_NAME);
 
 	res = PQexec(conn, query.data);
 	termPQExpBuffer(&query);
@@ -4958,43 +5008,28 @@ bdr_node_set_repmgr_set(PGconn *conn, const char *node_name)
 	PGresult   *res = NULL;
 	bool		success = true;
 
-//	if (bdr_version_num >= 3)
-//		return true;
+	if (bdr_version_num >= 3)
+		return true;
 
 	initPQExpBuffer(&query);
 
-	if (bdr_version_num < 3)
-	{
-		/*
-		 * Here we extract a list of existing replication sets, add 'repmgr', and
-		 * set the replication sets to the new list.
-		 */
-		appendPQExpBuffer(&query,
-						  " SELECT bdr.connection_set_replication_sets( "
-						  "   ARRAY( "
-						  "     SELECT repset::TEXT "
-						  "       FROM pg_catalog.unnest(bdr.connection_get_replication_sets('%s')) AS repset "
-						  "         UNION "
-						  "     SELECT 'repmgr'::TEXT "
-						  "   ), "
-						  "   '%s' "
-						  " ) ",
-						  node_name,
-						  node_name);
-	}
-	else
-	{
-		/* XXX assuming here BDR always sets subscription_name to "bdrgroup_${node_name} */
-/*		appendPQExpBuffer(&query,
-						  " SELECT pglogical.alter_subscription_add_replication_set( "
-						  "   subscription_name := 'bdrgroup_%s', "
-						  "   replication_set := 'repmgr' "
-						  " )",
-						  node_name);*/
-
-		appendPQExpBuffer(&query,
-						  "  SELECT pglogical.create_replication_set(set_name := 'repmgr')");
-	}
+	/*
+	 * Here we extract a list of existing replication sets, add 'repmgr', and
+	 * set the replication sets to the new list.
+	 */
+	appendPQExpBuffer(&query,
+					  " SELECT bdr.connection_set_replication_sets( "
+					  "   ARRAY( "
+					  "     SELECT repset::TEXT "
+					  "       FROM pg_catalog.unnest(bdr.connection_get_replication_sets('%s')) AS repset "
+					  "         UNION "
+					  "     SELECT '%s'::TEXT "
+					  "   ), "
+					  "   '%s' "
+					  " ) ",
+					  node_name,
+					  BDR2_REPLICATION_SET_NAME,
+					  node_name);
 
 	log_debug("bdr_node_set_repmgr_set():\n%s", query.data);
 

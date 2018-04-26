@@ -508,6 +508,7 @@ bool		is_bdr_db(PGconn *conn, PQExpBufferData *output);
 bool		is_bdr_db_quiet(PGconn *conn);
 bool		is_active_bdr_node(PGconn *conn, const char *node_name);
 bool		is_bdr_repmgr(PGconn *conn);
+char	   *get_default_bdr_replication_set(PGconn *conn);
 bool		is_table_in_bdr_replication_set(PGconn *conn, const char *tablename, const char *set);
 bool		add_table_to_bdr_replication_set(PGconn *conn, const char *tablename, const char *set);
 void		add_extension_tables_to_bdr_replication_set(PGconn *conn);
