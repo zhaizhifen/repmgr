@@ -41,7 +41,8 @@ typedef enum
 	PRIMARY,
 	STANDBY,
 	WITNESS,
-	BDR
+	BDR,
+	BDR_STANDBY
 } t_server_type;
 
 typedef enum
