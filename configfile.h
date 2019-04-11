@@ -148,6 +148,7 @@ typedef struct
 	bool		primary_visibility_consensus;
 	char		failover_validation_command[MAXPGPATH];
 	int			election_rerun_interval;
+	int			attached_nodes_check_interval;
 
 	/* BDR settings */
 	bool		bdr_local_monitoring_only;
@@ -221,6 +222,7 @@ typedef struct
 		DEFAULT_PRIMARY_NOTIFICATION_TIMEOUT, \
 		-1, "", false, DEFAULT_SIBLING_NODES_DISCONNECT_TIMEOUT, \
 		CHECK_PING, true, "", DEFAULT_ELECTION_RERUN_INTERVAL, \
+		DEFAULT_ATTACHED_NODES_CHECK_INTERVAL, \
 		/* BDR settings */ \
 		false, DEFAULT_BDR_RECOVERY_TIMEOUT, \
 		/* service settings */ \

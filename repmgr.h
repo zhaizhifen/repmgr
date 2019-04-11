@@ -96,6 +96,7 @@
 #define DEFAULT_WAL_RECEIVE_CHECK_TIMEOUT    30  /* seconds */
 #define DEFAULT_SIBLING_NODES_DISCONNECT_TIMEOUT 30 /* seconds */
 #define DEFAULT_ELECTION_RERUN_INTERVAL      15  /* seconds */
+#define DEFAULT_ATTACHED_NODES_CHECK_INTERVAL 15  /* seconds */
 
 #define WALRECEIVER_DISABLE_TIMEOUT_VALUE    86400000 /* milliseconds */
 

@@ -364,6 +364,7 @@ _parse_config(t_configuration_options *options, ItemList *error_list, ItemList *
 	options->primary_visibility_consensus = false;
 	memset(options->failover_validation_command, 0, sizeof(options->failover_validation_command));
 	options->election_rerun_interval = DEFAULT_ELECTION_RERUN_INTERVAL;
+	options->attached_nodes_check_interval = DEFAULT_ATTACHED_NODES_CHECK_INTERVAL;
 
 	/*-------------
 	 * witness settings
@@ -662,6 +663,8 @@ _parse_config(t_configuration_options *options, ItemList *error_list, ItemList *
 			strncpy(options->failover_validation_command, value, sizeof(options->failover_validation_command));
 		else if (strcmp(name, "election_rerun_interval") == 0)
 			options->election_rerun_interval = repmgr_atoi(value, name, error_list, 0);
+		else if (strcmp(name, "attached_nodes_check_interval") == 0)
+			options->attached_nodes_check_interval = repmgr_atoi(value, name, error_list, 1);
 
 		/* witness settings */
 		else if (strcmp(name, "witness_sync_interval") == 0)
