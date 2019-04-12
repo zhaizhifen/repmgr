@@ -53,6 +53,28 @@ typedef enum
 } ElectionResult;
 
 
+typedef struct t_child_node_info
+{
+	int node_id;
+	char node_name[NAMEDATALEN];
+	NodeAttached attached;
+	instr_time status_change_time;
+	struct t_child_node_info *next;
+} t_child_node_info;
+
+typedef struct t_child_node_info_list
+{
+	t_child_node_info *head;
+	t_child_node_info *tail;
+	int			node_count;
+} t_child_node_info_list;
+
+#define T_CHILD_NODE_INFO_LIST_INITIALIZER { \
+	NULL, \
+	NULL, \
+	0 \
+}
+
 static PGconn *upstream_conn = NULL;
 static PGconn *primary_conn = NULL;
 
@@ -229,6 +251,7 @@ void
 monitor_streaming_primary(void)
 {
 	instr_time	log_status_interval_start;
+	t_child_node_info_list child_nodes = T_CHILD_NODE_INFO_LIST_INITIALIZER;
 
 	reset_node_voting_status();
 
@@ -277,9 +300,8 @@ monitor_streaming_primary(void)
 	 */
 
 	{
-		NodeInfoList child_nodes = T_NODE_INFO_LIST_INITIALIZER;
-
-		bool success = get_child_nodes(local_conn, config_file_options.node_id, &child_nodes);
+		NodeInfoList child_node_records = T_NODE_INFO_LIST_INITIALIZER;
+		bool success = get_child_nodes(local_conn, config_file_options.node_id, &child_node_records);
 
 		if (!success)
 		{
@@ -288,14 +310,30 @@ monitor_streaming_primary(void)
 		else
 		{
 			NodeInfoListCell *cell;
-			for (cell = child_nodes.head; cell; cell = cell->next)
+
+			for (cell = child_node_records.head; cell; cell = cell->next)
 			{
+				t_child_node_info *child_node = pg_malloc0(sizeof(t_child_node_info));
+
 				log_info("child node: %i; attached: %s",
 						 cell->node_info->node_id,
 						 cell->node_info->attached == NODE_ATTACHED ? "yes" : "no");
+
+				child_node->node_id = cell->node_info->node_id;
+				snprintf(child_node->node_name, NAMEDATALEN, "%s", cell->node_info->node_name);
+				child_node->attached = cell->node_info->attached;
+
+				if (child_nodes.tail)
+					child_nodes.tail->next = child_node;
+				else
+					child_nodes.head = child_node;
+
+				child_nodes.tail = child_node;
+				child_nodes.node_count++;
 			}
 		}
 	}
+
 	while (true)
 	{
 		/*
@@ -456,6 +494,44 @@ monitor_streaming_primary(void)
 			 * starts up check status, switch monitoring mode
 			 */
 		}
+		else
+		{
+			// at "attached_nodes_check_interval"
+			{
+				NodeInfoList child_node_records = T_NODE_INFO_LIST_INITIALIZER;
+				bool success = get_child_nodes(local_conn, config_file_options.node_id, &child_node_records);
+
+				if (!success)
+				{
+					log_error("unable to retrieve list of child nodes");
+				}
+				else
+				{
+					NodeInfoListCell *cell;
+					// lists for newly attached and missing nodes
+
+					for (cell = child_node_records.head; cell; cell = cell->next)
+					{
+						t_child_node_info *child_node;
+						bool local_rec_found = false;
+
+						log_info("child node: %i; attached: %s",
+								 cell->node_info->node_id,
+								 cell->node_info->attached == NODE_ATTACHED ? "yes" : "no");
+
+						// foreach our child node list
+						//   if found:
+						//      next if active same
+						//    update if ours "unknown"
+						//  if ours active, query inactive: add to missing list, update self
+						//  if ours inactive, query active: add to recovered list, update self
+					}
+
+					// generate events as appropriate
+				}
+			}
+		}
+
 loop:
 
 		/* check node is still primary, if not restart monitoring */
