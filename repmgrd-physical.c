@@ -271,6 +271,31 @@ monitor_streaming_primary(void)
 	INSTR_TIME_SET_CURRENT(log_status_interval_start);
 	local_node_info.node_status = NODE_STATUS_UP;
 
+
+	/*
+	 * get list of expected and attached nodes
+	 */
+
+	{
+		NodeInfoList child_nodes = T_NODE_INFO_LIST_INITIALIZER;
+
+		bool success = get_child_nodes(local_conn, config_file_options.node_id, &child_nodes);
+
+		if (!success)
+		{
+			log_error("unable to retrieve list of child nodes");
+		}
+		else
+		{
+			NodeInfoListCell *cell;
+			for (cell = child_nodes.head; cell; cell = cell->next)
+			{
+				log_info("child node: %i; attached: %s",
+						 cell->node_info->node_id,
+						 cell->node_info->attached == NODE_ATTACHED ? "yes" : "no");
+			}
+		}
+	}
 	while (true)
 	{
 		/*
