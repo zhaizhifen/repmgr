@@ -253,7 +253,7 @@ void
 monitor_streaming_primary(void)
 {
 	instr_time	log_status_interval_start;
-	instr_time	attached_nodes_check_interval_start;
+	instr_time	child_nodes_check_interval_start;
 	t_child_node_info_list local_child_nodes = T_CHILD_NODE_INFO_LIST_INITIALIZER;
 
 	reset_node_voting_status();
@@ -295,7 +295,7 @@ monitor_streaming_primary(void)
 	}
 
 	INSTR_TIME_SET_CURRENT(log_status_interval_start);
-	INSTR_TIME_SET_CURRENT(attached_nodes_check_interval_start);
+	INSTR_TIME_SET_CURRENT(child_nodes_check_interval_start);
 	local_node_info.node_status = NODE_STATUS_UP;
 
 
@@ -494,11 +494,11 @@ monitor_streaming_primary(void)
 		}
 		else
 		{
-			if (config_file_options.attached_nodes_check_interval > 0)
+			if (config_file_options.child_nodes_check_interval > 0)
 			{
-				int			attached_nodes_check_interval_elapsed = calculate_elapsed(attached_nodes_check_interval_start);
+				int			child_nodes_check_interval_elapsed = calculate_elapsed(child_nodes_check_interval_start);
 
-				if (attached_nodes_check_interval_elapsed >= config_file_options.attached_nodes_check_interval)
+				if (child_nodes_check_interval_elapsed >= config_file_options.child_nodes_check_interval)
 				{
 					NodeInfoList db_child_node_records = T_NODE_INFO_LIST_INITIALIZER;
 					bool success = get_child_nodes(local_conn, config_file_options.node_id, &db_child_node_records);
@@ -571,12 +571,11 @@ monitor_streaming_primary(void)
 
 						}
 
-						
 						clear_child_node_info_list(&missing_child_nodes);
 						clear_child_node_info_list(&new_child_nodes);
 					}
 
-					INSTR_TIME_SET_CURRENT(attached_nodes_check_interval_start);
+					INSTR_TIME_SET_CURRENT(child_nodes_check_interval_start);
 				}
 			}
 		}
