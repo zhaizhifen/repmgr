@@ -95,7 +95,7 @@ typedef enum
 typedef enum
 {
 	NODE_ATTACHED_UNKNOWN = -1,
-	NODE_NOT_ATTACHED,
+	NODE_DETACHED,
 	NODE_ATTACHED
 } NodeAttached;
 

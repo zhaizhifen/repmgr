@@ -2293,7 +2293,7 @@ _populate_node_record(PGresult *res, t_node_info *node_info, int row, bool init_
 	}
 	else
 	{
-		node_info->attached = atobool(PQgetvalue(res, row, 12)) ? NODE_ATTACHED : NODE_NOT_ATTACHED;
+		node_info->attached = atobool(PQgetvalue(res, row, 12)) ? NODE_ATTACHED : NODE_DETACHED;
 	}
 
 	/* Set remaining struct fields with default values */

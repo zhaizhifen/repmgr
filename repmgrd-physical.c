@@ -116,6 +116,8 @@ static ElectionResult execute_failover_validation_command(t_node_info *node_info
 static void parse_failover_validation_command(const char *template,  t_node_info *node_info, PQExpBufferData *out);
 static bool check_node_can_follow(PGconn *local_conn, XLogRecPtr local_xlogpos, PGconn *follow_target_conn, t_node_info *follow_target_node_info);
 
+static void append_child_node_record(t_child_node_info_list *nodes, int node_id, const char *node_name, NodeAttached attached);
+static void clear_child_node_info_list(t_child_node_info_list *nodes);
 
 void
 handle_sigint_physical(SIGNAL_ARGS)
@@ -251,7 +253,8 @@ void
 monitor_streaming_primary(void)
 {
 	instr_time	log_status_interval_start;
-	t_child_node_info_list child_nodes = T_CHILD_NODE_INFO_LIST_INITIALIZER;
+	instr_time	attached_nodes_check_interval_start;
+	t_child_node_info_list local_child_nodes = T_CHILD_NODE_INFO_LIST_INITIALIZER;
 
 	reset_node_voting_status();
 
@@ -292,6 +295,7 @@ monitor_streaming_primary(void)
 	}
 
 	INSTR_TIME_SET_CURRENT(log_status_interval_start);
+	INSTR_TIME_SET_CURRENT(attached_nodes_check_interval_start);
 	local_node_info.node_status = NODE_STATUS_UP;
 
 
@@ -300,8 +304,8 @@ monitor_streaming_primary(void)
 	 */
 
 	{
-		NodeInfoList child_node_records = T_NODE_INFO_LIST_INITIALIZER;
-		bool success = get_child_nodes(local_conn, config_file_options.node_id, &child_node_records);
+		NodeInfoList db_child_node_records = T_NODE_INFO_LIST_INITIALIZER;
+		bool success = get_child_nodes(local_conn, config_file_options.node_id, &db_child_node_records);
 
 		if (!success)
 		{
@@ -311,25 +315,19 @@ monitor_streaming_primary(void)
 		{
 			NodeInfoListCell *cell;
 
-			for (cell = child_node_records.head; cell; cell = cell->next)
+			for (cell = db_child_node_records.head; cell; cell = cell->next)
 			{
-				t_child_node_info *child_node = pg_malloc0(sizeof(t_child_node_info));
+				// ?? here, if no pg_stat_replication record, set NODE_ATTACHED_UNKNOWN?
+				// so we can differentiate between nodes which detached/attached while repmgrd
+				// is running?
+				append_child_node_record(&local_child_nodes,
+										 cell->node_info->node_id,
+										 cell->node_info->node_name,
+										 cell->node_info->attached);
 
 				log_info("child node: %i; attached: %s",
 						 cell->node_info->node_id,
 						 cell->node_info->attached == NODE_ATTACHED ? "yes" : "no");
-
-				child_node->node_id = cell->node_info->node_id;
-				snprintf(child_node->node_name, NAMEDATALEN, "%s", cell->node_info->node_name);
-				child_node->attached = cell->node_info->attached;
-
-				if (child_nodes.tail)
-					child_nodes.tail->next = child_node;
-				else
-					child_nodes.head = child_node;
-
-				child_nodes.tail = child_node;
-				child_nodes.node_count++;
 			}
 		}
 	}
@@ -496,38 +494,89 @@ monitor_streaming_primary(void)
 		}
 		else
 		{
-			// at "attached_nodes_check_interval"
+			if (config_file_options.attached_nodes_check_interval > 0)
 			{
-				NodeInfoList child_node_records = T_NODE_INFO_LIST_INITIALIZER;
-				bool success = get_child_nodes(local_conn, config_file_options.node_id, &child_node_records);
+				int			attached_nodes_check_interval_elapsed = calculate_elapsed(attached_nodes_check_interval_start);
 
-				if (!success)
+				if (attached_nodes_check_interval_elapsed >= config_file_options.attached_nodes_check_interval)
 				{
-					log_error("unable to retrieve list of child nodes");
-				}
-				else
-				{
-					NodeInfoListCell *cell;
-					// lists for newly attached and missing nodes
+					NodeInfoList db_child_node_records = T_NODE_INFO_LIST_INITIALIZER;
+					bool success = get_child_nodes(local_conn, config_file_options.node_id, &db_child_node_records);
 
-					for (cell = child_node_records.head; cell; cell = cell->next)
+					if (!success)
 					{
-						t_child_node_info *child_node;
-						bool local_rec_found = false;
+						/* unlikely this will happen, but if it does, we'll try again next time round */
+						log_error(_("unable to retrieve list of child nodes"));
+					}
+					else
+					{
+						NodeInfoListCell *cell;
+						/* lists for newly attached and missing nodes */
+						t_child_node_info_list missing_child_nodes = T_CHILD_NODE_INFO_LIST_INITIALIZER;
+						t_child_node_info_list new_child_nodes = T_CHILD_NODE_INFO_LIST_INITIALIZER;
 
-						log_info("child node: %i; attached: %s",
-								 cell->node_info->node_id,
-								 cell->node_info->attached == NODE_ATTACHED ? "yes" : "no");
+						/*
+						 * compare DB records with our internal list;
+						 * this will tell us about:
+						 *  - previously known nodes and their current status
+						 *  - newly registered nodes we didn't know about
+						 *
+						 * We'll need to compare the opposite way to check for nodes
+						 * which are in the internal list, but which have now vanished
+						 */
+						for (cell = db_child_node_records.head; cell; cell = cell->next)
+						{
+							t_child_node_info *local_child_node_rec;
+							bool local_child_node_rec_found = false;
 
-						// foreach our child node list
-						//   if found:
-						//      next if active same
-						//    update if ours "unknown"
-						//  if ours active, query inactive: add to missing list, update self
-						//  if ours inactive, query active: add to recovered list, update self
+							log_info("child node: %i; attached: %s",
+									 cell->node_info->node_id,
+									 cell->node_info->attached == NODE_ATTACHED ? "yes" : "no");
+
+							for (local_child_node_rec = local_child_nodes.head; local_child_node_rec; local_child_node_rec = local_child_node_rec->next)
+							{
+								if (local_child_node_rec->node_id == cell->node_info->node_id)
+								{
+									local_child_node_rec_found = true;
+									break;
+								}
+							}
+
+							if (local_child_node_rec_found == true)
+							{
+								/* our node record shows node attached, DB record indicates detached */
+								if (local_child_node_rec->attached == NODE_ATTACHED &&  cell->node_info->attached == NODE_DETACHED)
+								{
+									log_warning(_("node %i has detached"), local_child_node_rec->node_id);
+									local_child_node_rec->attached = NODE_DETACHED;
+								}
+								/* our node record shows node detached, DB record indicates attached */
+								else if (local_child_node_rec->attached == NODE_DETACHED &&  cell->node_info->attached == NODE_ATTACHED)
+								{
+									log_warning(_("node %i has reattached"), local_child_node_rec->node_id);
+									local_child_node_rec->attached = NODE_ATTACHED;
+								}
+							}
+
+							else
+							{
+								/* node we didn't know about before */
+								log_notice(_("new node %i has attached"), local_child_node_rec->node_id);
+								append_child_node_record(&local_child_nodes,
+														 cell->node_info->node_id,
+														 cell->node_info->node_name,
+														 cell->node_info->attached);
+							}
+
+
+						}
+
+						
+						clear_child_node_info_list(&missing_child_nodes);
+						clear_child_node_info_list(&new_child_nodes);
 					}
 
-					// generate events as appropriate
+					INSTR_TIME_SET_CURRENT(attached_nodes_check_interval_start);
 				}
 			}
 		}
@@ -4457,4 +4506,46 @@ check_node_can_follow(PGconn *local_conn, XLogRecPtr local_xlogpos, PGconn *foll
 
 
 	return can_follow;
+}
+
+
+static void
+append_child_node_record(t_child_node_info_list *nodes, int node_id, const char *node_name, NodeAttached attached)
+{
+	t_child_node_info *child_node = pg_malloc0(sizeof(t_child_node_info));
+
+	child_node->node_id = node_id;
+	snprintf(child_node->node_name, sizeof(child_node->node_name), "%s", node_name);
+	child_node->attached = attached;
+
+	if (nodes->tail)
+		nodes->tail->next = child_node;
+	else
+		nodes->head = child_node;
+
+	nodes->tail = child_node;
+	nodes->node_count++;
+
+	return;
+}
+
+
+static void
+clear_child_node_info_list(t_child_node_info_list *nodes)
+{
+	t_child_node_info *node;
+	t_child_node_info *next_node;
+
+	node = nodes->head;
+
+	while (node != NULL)
+	{
+		next_node = node->next;
+		pfree(node);
+		node = next_node;
+	}
+
+	nodes->head = NULL;
+	nodes->tail = NULL;
+	nodes->node_count = 0;
 }
