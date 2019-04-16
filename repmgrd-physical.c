@@ -923,9 +923,32 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 		}
 	}
 
+
+	if (config_file_options.child_nodes_disconnect_command[0] != '\0')
+	{
+		int min_required_connected_count = db_child_node_records.node_count;
+		int connected_count = 0;
+
+		/* calculate number of connected child nodes */
+		for (cell = db_child_node_records.head; cell; cell = cell->next)
+		{
+			if (cell->node_info->attached == NODE_ATTACHED)
+				connected_count ++;
+		}
+
+		if (connected_count < min_required_connected_count)
+		{
+			log_notice("connected: %i; min required: %i",
+					   connected_count,
+					   min_required_connected_count);
+		}
+	}
+
 	clear_child_node_info_list(&disconnected_child_nodes);
 	clear_child_node_info_list(&reconnected_child_nodes);
 	clear_child_node_info_list(&new_child_nodes);
+
+	clear_node_info_list(&db_child_node_records);
 }
 
 
