@@ -529,12 +529,13 @@ monitor_streaming_primary(void)
 							t_child_node_info *local_child_node_rec;
 							bool local_child_node_rec_found = false;
 
-							log_info("child node: %i; attached: %s",
-									 cell->node_info->node_id,
-									 cell->node_info->attached == NODE_ATTACHED ? "yes" : "no");
+							log_debug("child node: %i; attached: %s",
+									  cell->node_info->node_id,
+									  cell->node_info->attached == NODE_ATTACHED ? "yes" : "no");
 
 							for (local_child_node_rec = local_child_nodes.head; local_child_node_rec; local_child_node_rec = local_child_node_rec->next)
 							{
+								log_debug("local record %i", local_child_node_rec->node_id);
 								if (local_child_node_rec->node_id == cell->node_info->node_id)
 								{
 									local_child_node_rec_found = true;
@@ -578,8 +579,11 @@ monitor_streaming_primary(void)
 							else
 							{
 								/* node we didn't know about before */
-								log_notice(_("new node %i has attached"), local_child_node_rec->node_id);
 								(void) append_child_node_record(&local_child_nodes,
+																cell->node_info->node_id,
+																cell->node_info->node_name,
+																cell->node_info->attached);
+								(void) append_child_node_record(&new_child_nodes,
 																cell->node_info->node_id,
 																cell->node_info->node_name,
 																cell->node_info->attached);
@@ -630,6 +634,31 @@ monitor_streaming_primary(void)
 														  &config_file_options,
 														  local_node_info.node_id,
 														  "child_node_reconnect",
+														  true,
+														  event_details.data);
+
+								termPQExpBuffer(&event_details);
+							}
+						}
+
+						/* generate "child_node_new_connect" events */
+						if (new_child_nodes.node_count > 0)
+						{
+							t_child_node_info *child_node_rec;
+							for (child_node_rec = new_child_nodes.head; child_node_rec; child_node_rec = child_node_rec->next)
+							{
+								PQExpBufferData event_details;
+								initPQExpBuffer(&event_details);
+								appendPQExpBuffer(&event_details,
+												  _("new node \"%s\" (node ID: %i) has connected"),
+												  child_node_rec->node_name,
+												  child_node_rec->node_id);
+								log_notice("%s",  event_details.data);
+
+								create_event_notification(local_conn,
+														  &config_file_options,
+														  local_node_info.node_id,
+														  "child_node_new_connect",
 														  true,
 														  event_details.data);
 
