@@ -85,6 +85,7 @@ static t_node_info upstream_node_info = T_NODE_INFO_INITIALIZER;
 
 static instr_time last_monitoring_update;
 
+static bool child_nodes_disconnect_command_executed = false;
 
 static ElectionResult do_election(NodeInfoList *sibling_nodes, int *new_primary_id);
 static const char *_print_election_result(ElectionResult result);
@@ -119,6 +120,7 @@ static bool check_node_can_follow(PGconn *local_conn, XLogRecPtr local_xlogpos, 
 
 static t_child_node_info *append_child_node_record(t_child_node_info_list *nodes, int node_id, const char *node_name, NodeAttached attached);
 static void clear_child_node_info_list(t_child_node_info_list *nodes);
+static void parse_child_nodes_disconnect_command(char *parsed_command, char *template);
 
 void
 handle_sigint_physical(SIGNAL_ARGS)
@@ -772,6 +774,11 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 		return;
 	}
 
+	if (db_child_node_records.node_count == 0)
+	{
+		/* no registered child nodes - nothing to do */
+		return;
+	}
 
 	/*
 	 * compare DB records with our internal list;
@@ -828,9 +835,9 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 															   local_child_node_rec->node_id,
 															   local_child_node_rec->node_name,
 															   NODE_ATTACHED);
-				attached_child_node->detached_time = local_child_node_rec->detached_time;
 
 				INSTR_TIME_SET_ZERO(local_child_node_rec->detached_time);
+				INSTR_TIME_SET_ZERO(attached_child_node->detached_time);
 			}
 		}
 		else
@@ -926,8 +933,27 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 
 	if (config_file_options.child_nodes_disconnect_command[0] != '\0')
 	{
-		int min_required_connected_count = db_child_node_records.node_count;
+		/*
+		 * script will only be executed if the number of attached
+		 * standbys is lower than this number
+		 */
+		int min_required_connected_count = 1;
 		int connected_count = 0;
+
+		/*
+		 * Calculate hi
+		 */
+
+		if (config_file_options.child_nodes_disconnect_min_count > 0)
+		{
+			min_required_connected_count =
+				(db_child_node_records.node_count - config_file_options.child_nodes_disconnect_min_count)
+				+ 1;
+		}
+		else if (config_file_options.child_nodes_connected_min_count > 0)
+		{
+			min_required_connected_count = config_file_options.child_nodes_connected_min_count;
+		}
 
 		/* calculate number of connected child nodes */
 		for (cell = db_child_node_records.head; cell; cell = cell->next)
@@ -936,11 +962,73 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 				connected_count ++;
 		}
 
+		log_debug("connected: %i; min required: %i",
+				  connected_count,
+				  min_required_connected_count);
+
 		if (connected_count < min_required_connected_count)
 		{
-			log_notice("connected: %i; min required: %i",
+			log_notice(_("%i (of %i) child nodes are connected, but %i child nodes required"),
 					   connected_count,
+					   db_child_node_records.node_count,
 					   min_required_connected_count);
+
+			if (child_nodes_disconnect_command_executed == false)
+			{
+				t_child_node_info *child_node_rec;
+				bool most_recent_disconnect_below_threshold = false;
+				instr_time  current_time_base;
+				INSTR_TIME_SET_CURRENT(current_time_base);
+
+				for (child_node_rec = disconnected_child_nodes.head; child_node_rec; child_node_rec = child_node_rec->next)
+				{
+					instr_time  current_time = current_time_base;
+
+					INSTR_TIME_SUBTRACT(current_time, child_node_rec->detached_time);
+
+					if ((int) INSTR_TIME_GET_DOUBLE(current_time) < config_file_options.child_nodes_disconnect_timeout)
+					{
+						most_recent_disconnect_below_threshold = true;
+						break;
+					}
+				}
+
+				if (most_recent_disconnect_below_threshold == false)
+				{
+					char parsed_child_nodes_disconnect_command[MAXPGPATH];
+
+					parse_child_nodes_disconnect_command(parsed_child_nodes_disconnect_command,
+														 config_file_options.child_nodes_disconnect_command);
+
+					log_info(_("child_nodes_disconnect_command is:\n  \"%s\""),
+							 parsed_child_nodes_disconnect_command);
+					child_nodes_disconnect_command_executed = true;
+				}
+				else
+				{
+					log_info(_("XXX disconnect not recent enough"));
+				}
+			}
+			else
+			{
+				log_info(_("child_nodes_disconnect_command was previously executed, taking no action"));
+			}
+		}
+		else
+		{
+			/*
+			 * "child_nodes_disconnect_command" was executed, but for whatever reason
+			 * enough have returned to clear the threshold; in that case reset
+			 * the executed flag so we can execute again, if necessary
+			 */
+			if (child_nodes_disconnect_command_executed == true)
+			{
+				log_notice(_("%i (of %i) child nodes are now connected, meeting minimum requirement of %i child nodes "),
+						   connected_count,
+						   db_child_node_records.node_count,
+						   min_required_connected_count);
+				child_nodes_disconnect_command_executed = false;
+			}
 		}
 	}
 
@@ -4672,4 +4760,44 @@ clear_child_node_info_list(t_child_node_info_list *nodes)
 	nodes->head = NULL;
 	nodes->tail = NULL;
 	nodes->node_count = 0;
+}
+
+
+static void
+parse_child_nodes_disconnect_command(char *parsed_command, char *template)
+{
+	const char *src_ptr = NULL;
+	char	   *dst_ptr = NULL;
+	char	   *end_ptr = NULL;
+
+	dst_ptr = parsed_command;
+	end_ptr = (parsed_command + MAXPGPATH) - 1;
+	*end_ptr = '\0';
+
+	for (src_ptr = template; *src_ptr; src_ptr++)
+	{
+		if (*src_ptr == '%')
+		{
+			switch (src_ptr[1])
+			{
+				case '%':
+					/* %%: replace with % */
+					if (dst_ptr < end_ptr)
+					{
+						src_ptr++;
+						*dst_ptr++ = *src_ptr;
+					}
+					break;
+			}
+		}
+		else
+		{
+			if (dst_ptr < end_ptr)
+				*dst_ptr++ = *src_ptr;
+		}
+	}
+
+	*dst_ptr = '\0';
+
+	return;
 }
