@@ -968,7 +968,7 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 
 		if (connected_count < min_required_connected_count)
 		{
-			log_notice(_("%i (of %i) child nodes are connected, but %i child nodes required"),
+			log_notice(_("%i (of %i) child nodes are connected, but at least %i child nodes required"),
 					   connected_count,
 					   db_child_node_records.node_count,
 					   min_required_connected_count);
@@ -976,22 +976,49 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 			if (child_nodes_disconnect_command_executed == false)
 			{
 				t_child_node_info *child_node_rec;
+
+				/* set these for informative purposes */
+				int most_recently_disconnected_node_id = UNKNOWN_NODE_ID;
+				int most_recently_disconnected_elapsed = -1;
+
 				bool most_recent_disconnect_below_threshold = false;
 				instr_time  current_time_base;
+
 				INSTR_TIME_SET_CURRENT(current_time_base);
 
-				for (child_node_rec = disconnected_child_nodes.head; child_node_rec; child_node_rec = child_node_rec->next)
+				for (child_node_rec = local_child_nodes->head; child_node_rec; child_node_rec = child_node_rec->next)
 				{
 					instr_time  current_time = current_time_base;
+					int seconds_since_detached;
+
+					if (child_node_rec->attached != NODE_DETACHED)
+						continue;
 
 					INSTR_TIME_SUBTRACT(current_time, child_node_rec->detached_time);
+					seconds_since_detached = (int) INSTR_TIME_GET_DOUBLE(current_time);
 
-					if ((int) INSTR_TIME_GET_DOUBLE(current_time) < config_file_options.child_nodes_disconnect_timeout)
+					log_debug("XXX %i %i", child_node_rec->node_id, seconds_since_detached);
+
+					if (seconds_since_detached < config_file_options.child_nodes_disconnect_timeout)
 					{
 						most_recent_disconnect_below_threshold = true;
-						break;
+					}
+
+					if (most_recently_disconnected_node_id == UNKNOWN_NODE_ID)
+					{
+						most_recently_disconnected_node_id = child_node_rec->node_id;
+						most_recently_disconnected_elapsed = seconds_since_detached;
+					}
+					else if (seconds_since_detached < most_recently_disconnected_elapsed)
+					{
+						most_recently_disconnected_node_id = child_node_rec->node_id;
+						most_recently_disconnected_elapsed = seconds_since_detached;
 					}
 				}
+
+				log_info(_("most recently detached child node was %i (ca. %i seconds ago)"),
+						 most_recently_disconnected_node_id,
+						 most_recently_disconnected_elapsed);
 
 				if (most_recent_disconnect_below_threshold == false)
 				{
