@@ -997,8 +997,6 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 					INSTR_TIME_SUBTRACT(current_time, child_node_rec->detached_time);
 					seconds_since_detached = (int) INSTR_TIME_GET_DOUBLE(current_time);
 
-					log_debug("XXX %i %i", child_node_rec->node_id, seconds_since_detached);
-
 					if (seconds_since_detached < config_file_options.child_nodes_disconnect_timeout)
 					{
 						most_recent_disconnect_below_threshold = true;
@@ -1016,9 +1014,6 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 					}
 				}
 
-				log_info(_("most recently detached child node was %i (ca. %i seconds ago)"),
-						 most_recently_disconnected_node_id,
-						 most_recently_disconnected_elapsed);
 
 				if (most_recent_disconnect_below_threshold == false)
 				{
@@ -1027,13 +1022,22 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 					parse_child_nodes_disconnect_command(parsed_child_nodes_disconnect_command,
 														 config_file_options.child_nodes_disconnect_command);
 
-					log_info(_("child_nodes_disconnect_command is:\n  \"%s\""),
+					log_info(_("most recently detached child node was %i (ca. %i seconds ago), triggering \"child_nodes_disconnect_command\""),
+							 most_recently_disconnected_node_id,
+							 most_recently_disconnected_elapsed);
+
+					log_info(_("\"child_nodes_disconnect_command\" is:\n  \"%s\""),
 							 parsed_child_nodes_disconnect_command);
 					child_nodes_disconnect_command_executed = true;
 				}
 				else
 				{
-					log_info(_("XXX disconnect not recent enough"));
+					log_info(_("most recently detached child node was %i (ca. %i seconds ago), not triggering \"child_nodes_disconnect_command\""),
+							 most_recently_disconnected_node_id,
+							 most_recently_disconnected_elapsed);
+
+					log_detail(_("\"child_nodes_disconnect_timeout\" set to %i seconds"),
+							   config_file_options.child_nodes_disconnect_timeout);
 				}
 			}
 			else
@@ -1045,8 +1049,8 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 		{
 			/*
 			 * "child_nodes_disconnect_command" was executed, but for whatever reason
-			 * enough have returned to clear the threshold; in that case reset
-			 * the executed flag so we can execute again, if necessary
+			 * enough child nodes have returned to clear the threshold; in that case reset
+			 * the executed flag so we can execute the command again, if necessary
 			 */
 			if (child_nodes_disconnect_command_executed == true)
 			{
