@@ -847,9 +847,8 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 															   local_child_node_rec->node_id,
 															   local_child_node_rec->node_name,
 															   NODE_ATTACHED);
-
+				attached_child_node->detached_time = local_child_node_rec->detached_time;
 				INSTR_TIME_SET_ZERO(local_child_node_rec->detached_time);
-				INSTR_TIME_SET_ZERO(attached_child_node->detached_time);
 			}
 			else if (local_child_node_rec->attached == NODE_ATTACHED_UNKNOWN  && cell->node_info->attached == NODE_ATTACHED)
 			{
