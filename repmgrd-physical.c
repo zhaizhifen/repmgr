@@ -311,7 +311,7 @@ monitor_streaming_primary(void)
 
 		if (!success)
 		{
-			log_error("unable to retrieve list of child nodes");
+			log_error(_("unable to retrieve list of child nodes"));
 		}
 		else
 		{
@@ -319,17 +319,30 @@ monitor_streaming_primary(void)
 
 			for (cell = db_child_node_records.head; cell; cell = cell->next)
 			{
-				// ?? here, if no pg_stat_replication record, set NODE_ATTACHED_UNKNOWN?
-				// so we can differentiate between nodes which detached/attached while repmgrd
-				// is running?
+				/*
+				 * At startup, if a node for which a repmgr record exists, is not found
+				 * in pg_stat_replication, we can't know whether it has become detached, or
+				 * (e.g. during a provisioning operation) is a new node which has not yet
+				 * attached. We set the status to "NODE_ATTACHED_UNKNOWN" to stop repmgrd
+				 * emitting bogus "node has become detached" alerts.
+				 */
 				(void) append_child_node_record(&local_child_nodes,
 												cell->node_info->node_id,
 												cell->node_info->node_name,
-												cell->node_info->attached);
+												cell->node_info->attached == NODE_ATTACHED ? NODE_ATTACHED : NODE_ATTACHED_UNKNOWN);
 
-				log_info("child node: %i; attached: %s",
-						 cell->node_info->node_id,
-						 cell->node_info->attached == NODE_ATTACHED ? "yes" : "no");
+				if (cell->node_info->attached == NODE_ATTACHED)
+				{
+					log_info(_("child node \"%s\" (node ID: %i) is attached"),
+							 cell->node_info->node_name,
+							 cell->node_info->node_id);
+				}
+				else
+				{
+					log_info(_("child node \"%s\" (node ID: %i) is not yet attached"),
+							 cell->node_info->node_name,
+							 cell->node_info->node_id);
+				}
 			}
 		}
 	}
@@ -800,7 +813,6 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 
 		for (local_child_node_rec = local_child_nodes->head; local_child_node_rec; local_child_node_rec = local_child_node_rec->next)
 		{
-			log_debug("local record %i", local_child_node_rec->node_id);
 			if (local_child_node_rec->node_id == cell->node_info->node_id)
 			{
 				local_child_node_rec_found = true;
@@ -839,18 +851,37 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 				INSTR_TIME_SET_ZERO(local_child_node_rec->detached_time);
 				INSTR_TIME_SET_ZERO(attached_child_node->detached_time);
 			}
+			else if (local_child_node_rec->attached == NODE_ATTACHED_UNKNOWN  && cell->node_info->attached == NODE_ATTACHED)
+			{
+				local_child_node_rec->attached = NODE_ATTACHED;
+
+				append_child_node_record(&new_child_nodes,
+										 local_child_node_rec->node_id,
+										 local_child_node_rec->node_name,
+										 NODE_ATTACHED);
+			}
 		}
 		else
 		{
 			/* node we didn't know about before */
+
+			NodeAttached attached = cell->node_info->attached;
+
+			/*
+			 * node registered but not attached - set state to "UNKNOWN"
+			 * to prevent a bogus "reattach" event being generated
+			 */
+			if (attached == NODE_DETACHED)
+				attached = NODE_ATTACHED_UNKNOWN;
+
 			(void) append_child_node_record(local_child_nodes,
 											cell->node_info->node_id,
 											cell->node_info->node_name,
-											cell->node_info->attached);
+											attached);
 			(void) append_child_node_record(&new_child_nodes,
 											cell->node_info->node_id,
 											cell->node_info->node_name,
-											cell->node_info->attached);
+											attached);
 		}
 	}
 
@@ -1015,7 +1046,7 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 				}
 
 
-				if (most_recent_disconnect_below_threshold == false)
+				if (most_recent_disconnect_below_threshold == false && most_recently_disconnected_node_id != UNKNOWN_NODE_ID)
 				{
 					char parsed_child_nodes_disconnect_command[MAXPGPATH];
 
@@ -1030,12 +1061,11 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 							 parsed_child_nodes_disconnect_command);
 					child_nodes_disconnect_command_executed = true;
 				}
-				else
+				else if (most_recently_disconnected_node_id != UNKNOWN_NODE_ID)
 				{
 					log_info(_("most recently detached child node was %i (ca. %i seconds ago), not triggering \"child_nodes_disconnect_command\""),
 							 most_recently_disconnected_node_id,
 							 most_recently_disconnected_elapsed);
-
 					log_detail(_("\"child_nodes_disconnect_timeout\" set to %i seconds"),
 							   config_file_options.child_nodes_disconnect_timeout);
 				}
