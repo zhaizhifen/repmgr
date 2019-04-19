@@ -1069,10 +1069,14 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 					log_detail(_("\"child_nodes_disconnect_timeout\" set to %i seconds"),
 							   config_file_options.child_nodes_disconnect_timeout);
 				}
+				else
+				{
+					log_info(_("no child nodes have detached since repmgrd startup"));
+				}
 			}
 			else
 			{
-				log_info(_("child_nodes_disconnect_command was previously executed, taking no action"));
+				log_info(_("\"child_nodes_disconnect_command\" was previously executed, taking no action"));
 			}
 		}
 		else
@@ -1084,7 +1088,7 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 			 */
 			if (child_nodes_disconnect_command_executed == true)
 			{
-				log_notice(_("%i (of %i) child nodes are now connected, meeting minimum requirement of %i child nodes "),
+				log_notice(_("%i (of %i) child nodes are now connected, meeting minimum requirement of %i child nodes"),
 						   connected_count,
 						   db_child_node_records.node_count,
 						   min_required_connected_count);
