@@ -119,6 +119,7 @@ static void parse_failover_validation_command(const char *template,  t_node_info
 static bool check_node_can_follow(PGconn *local_conn, XLogRecPtr local_xlogpos, PGconn *follow_target_conn, t_node_info *follow_target_node_info);
 
 static t_child_node_info *append_child_node_record(t_child_node_info_list *nodes, int node_id, const char *node_name, NodeAttached attached);
+static void remove_child_node_record(t_child_node_info_list *nodes, int node_id);
 static void clear_child_node_info_list(t_child_node_info_list *nodes);
 static void parse_child_nodes_disconnect_command(char *parsed_command, char *template);
 
@@ -881,6 +882,35 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 											cell->node_info->node_id,
 											cell->node_info->node_name,
 											attached);
+		}
+	}
+
+	/*
+	 * Check if any nodes in local list are no longer in list returned
+	 * from database.
+	 */
+	{
+		t_child_node_info *local_child_node_rec;
+		bool db_node_rec_found = false;
+
+		for (local_child_node_rec = local_child_nodes->head; local_child_node_rec; local_child_node_rec = local_child_node_rec->next)
+		{
+			for (cell = db_child_node_records.head; cell; cell = cell->next)
+			{
+				if (cell->node_info->node_id == local_child_node_rec->node_id)
+				{
+					db_node_rec_found = true;
+					break;
+				}
+			}
+
+			if (db_node_rec_found == false)
+			{
+				log_notice(_("child node \"%s\" (node id %i) is no longer connected or registered"),
+						   local_child_node_rec->node_name,
+						   local_child_node_rec->node_id);
+				remove_child_node_record(local_child_nodes, local_child_node_rec->node_id);
+			}
 		}
 	}
 
@@ -4805,6 +4835,49 @@ append_child_node_record(t_child_node_info_list *nodes, int node_id, const char 
 	return child_node;
 }
 
+
+static void
+remove_child_node_record(t_child_node_info_list *nodes, int node_id)
+{
+	t_child_node_info *node;
+	t_child_node_info *prev_node = NULL;
+	t_child_node_info *next_node = NULL;
+
+	node = nodes->head;
+
+	while (node != NULL)
+	{
+		next_node = node->next;
+
+		log_debug("ZZZ node: %i", node->node_id);
+
+		if (node->node_id == node_id)
+		{
+			/* first node */
+			if (node == nodes->head)
+			{
+				nodes->head = next_node;
+			}
+			/* last node */
+			else if (next_node == NULL)
+			{
+				prev_node->next = NULL;
+			}
+			else
+			{
+				prev_node->next = next_node;
+			}
+			pfree(node);
+			nodes->node_count--;
+			return;
+		}
+		else
+		{
+			prev_node = node;
+		}
+		node = next_node;
+	}
+}
 
 static void
 clear_child_node_info_list(t_child_node_info_list *nodes)
