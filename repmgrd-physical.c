@@ -1004,15 +1004,15 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 		 * Calculate hi
 		 */
 
-		if (config_file_options.child_nodes_disconnect_min_count > 0)
+		if (config_file_options.child_nodes_connected_min_count > 0)
+		{
+			min_required_connected_count = config_file_options.child_nodes_connected_min_count;
+		}
+		else if (config_file_options.child_nodes_disconnect_min_count > 0)
 		{
 			min_required_connected_count =
 				(db_child_node_records.node_count - config_file_options.child_nodes_disconnect_min_count)
 				+ 1;
-		}
-		else if (config_file_options.child_nodes_connected_min_count > 0)
-		{
-			min_required_connected_count = config_file_options.child_nodes_connected_min_count;
 		}
 
 		/* calculate number of connected child nodes */
