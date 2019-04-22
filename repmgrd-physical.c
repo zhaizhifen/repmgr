@@ -121,7 +121,7 @@ static bool check_node_can_follow(PGconn *local_conn, XLogRecPtr local_xlogpos, 
 static t_child_node_info *append_child_node_record(t_child_node_info_list *nodes, int node_id, const char *node_name, NodeAttached attached);
 static void remove_child_node_record(t_child_node_info_list *nodes, int node_id);
 static void clear_child_node_info_list(t_child_node_info_list *nodes);
-static void parse_child_nodes_disconnect_command(char *parsed_command, char *template);
+static void parse_child_nodes_disconnect_command(char *parsed_command, char *template, int reporting_node_id);
 
 void
 handle_sigint_physical(SIGNAL_ARGS)
@@ -1078,9 +1078,13 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 				if (most_recent_disconnect_below_threshold == false && most_recently_disconnected_node_id != UNKNOWN_NODE_ID)
 				{
 					char parsed_child_nodes_disconnect_command[MAXPGPATH];
+					int child_nodes_disconnect_command_result;
+					PQExpBufferData event_details;
+					bool success = true;
 
 					parse_child_nodes_disconnect_command(parsed_child_nodes_disconnect_command,
-														 config_file_options.child_nodes_disconnect_command);
+														 config_file_options.child_nodes_disconnect_command,
+														 local_node_info.node_id);
 
 					log_info(_("most recently detached child node was %i (ca. %i seconds ago), triggering \"child_nodes_disconnect_command\""),
 							 most_recently_disconnected_node_id,
@@ -1088,6 +1092,37 @@ check_primary_child_nodes(t_child_node_info_list *local_child_nodes)
 
 					log_info(_("\"child_nodes_disconnect_command\" is:\n  \"%s\""),
 							 parsed_child_nodes_disconnect_command);
+
+					child_nodes_disconnect_command_result = system(parsed_child_nodes_disconnect_command);
+
+					initPQExpBuffer(&event_details);
+
+					if (child_nodes_disconnect_command_result != 0)
+					{
+						success = false;
+
+						appendPQExpBufferStr(&event_details,
+											 _("unable to execute \"child_nodes_disconnect_command\""));
+
+						log_error("%s", event_details.data);
+					}
+					else
+					{
+						appendPQExpBufferStr(&event_details,
+										  _("\"child_nodes_disconnect_command\" successfully executed"));
+
+						log_info("%s", event_details.data);
+					}
+
+					create_event_notification(local_conn,
+											  &config_file_options,
+											  local_node_info.node_id,
+											  "child_nodes_disconnect_command",
+											  success,
+											  event_details.data);
+
+					termPQExpBuffer(&event_details);
+
 					child_nodes_disconnect_command_executed = true;
 				}
 				else if (most_recently_disconnected_node_id != UNKNOWN_NODE_ID)
@@ -4901,7 +4936,7 @@ clear_child_node_info_list(t_child_node_info_list *nodes)
 
 
 static void
-parse_child_nodes_disconnect_command(char *parsed_command, char *template)
+parse_child_nodes_disconnect_command(char *parsed_command, char *template, int reporting_node_id)
 {
 	const char *src_ptr = NULL;
 	char	   *dst_ptr = NULL;
@@ -4924,6 +4959,12 @@ parse_child_nodes_disconnect_command(char *parsed_command, char *template)
 						src_ptr++;
 						*dst_ptr++ = *src_ptr;
 					}
+					break;
+				case 'p':
+					/* %p: node id of the reporting primary */
+					src_ptr++;
+					snprintf(dst_ptr, end_ptr - dst_ptr, "%i", reporting_node_id);
+					dst_ptr += strlen(dst_ptr);
 					break;
 			}
 		}
